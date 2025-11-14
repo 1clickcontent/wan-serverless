@@ -2,7 +2,7 @@ import subprocess
 import sys
 import os
 
-print("[runner] Starting ComfyUI server...")
+print("[runner] Starting ComfyUI...")
 
 args = [
     sys.executable,
@@ -12,11 +12,10 @@ args = [
     "--disable-auto-launch"
 ]
 
-# Local CPU mode (USE_GPU not set)
-if os.environ.get("USE_GPU") != "1":
-    print("[runner] Using CPU mode for local testing")
-    args.append("--cpu")
+if os.environ.get("USE_GPU") == "1":
+    print("[runner] GPU mode enabled")
 else:
-    print("[runner] Using GPU mode for RunPod")
+    print("[runner] CPU mode (local testing)")
+    args.append("--cpu")
 
 subprocess.run(args)
