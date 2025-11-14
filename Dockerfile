@@ -1,85 +1,70 @@
+# Dockerfile - COMFYUI + WAN + SAM2 + DWpose + RIFE + SDXL (targets 48GB+ GPUs)
+# WARNING: image will be large when you include models/
+
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
+ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /workspace
 
-# ---------------------------------------------------------------------
-# System dependencies
-# ---------------------------------------------------------------------
+# -------------------------
+# System deps
+# -------------------------
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip git wget curl ffmpeg libgl1 libglib2.0-0 \
+    git python3 python3-pip python3-dev ffmpeg wget curl build-essential ca-certificates \
+    libgl1 libglib2.0-0 libsm6 libxext6 pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------------------------------------------------------------------
-# Install CUDA 12.1 compatible PyTorch stack (MUST USE THESE VERSIONS)
-# ---------------------------------------------------------------------
-RUN pip install --upgrade pip && \
-    pip install \
-        torch==2.1.1+cu121 \
-        torchvision==0.16.1+cu121 \
-        torchaudio==2.1.1+cu121 \
-        --index-url https://download.pytorch.org/whl/cu121
+# upgrade pip
+RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# ---------------------------------------------------------------------
-# Stable dependencies for ComfyUI + custom nodes
-# ---------------------------------------------------------------------
-RUN pip install \
-    "transformers==4.31.0" \
-    "diffusers==0.21.0" \
-    "accelerate==0.25.0" \
-    "numpy<2" \
-    "requests"
+# -------------------------
+# PyTorch / Torchvision / Torchaudio (CUDA 12.1)
+# Use official wheels from pytorch index.
+# -------------------------
+RUN pip install --no-cache-dir \
+    "torch>=2.4.0" "torchvision" "torchaudio" --index-url https://download.pytorch.org/whl/cu121
 
-# ---------------------------------------------------------------------
+# -------------------------
 # Clone ComfyUI
-# ---------------------------------------------------------------------
+# -------------------------
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
 
-# Install ComfyUI requirements
-RUN pip install -r /workspace/ComfyUI/requirements.txt || true
+# Install ComfyUI requirements (we will override any problematic packages later)
+RUN pip install --no-cache-dir -r /workspace/ComfyUI/requirements.txt
 
-# ---------------------------------------------------------------------
-# Custom nodes
-# ---------------------------------------------------------------------
-RUN mkdir -p /workspace/ComfyUI/custom_nodes && \
-    cd /workspace/ComfyUI/custom_nodes && \
-    git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git && \
-    git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
-    git clone https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git && \
-    git clone https://github.com/kijai/ComfyUI-KJNodes.git
+# -------------------------
+# Install / force compatible transformers (avoid pytree register error)
+# pinned to safe version
+# -------------------------
+RUN pip install --no-cache-dir "transformers==4.35.2" "diffusers>=0.20.0" "accelerate" "safetensors" "onnxruntime-gpu" "opencv-python-headless" "imageio[ffmpeg]" "tqdm" "einops" "ftfy"
 
-# ---------------------------------------------------------------------
-# FIX: Force reinstall stable versions (custom nodes overwrite this)
-# ---------------------------------------------------------------------
-RUN pip uninstall -y transformers diffusers accelerate && \
-    pip install \
-        "transformers==4.31.0" \
-        "diffusers==0.21.0" \
-        "accelerate==0.25.0" \
-        "numpy<2"
+# Optional: install xformers if you want (skip if build fails or too heavy)
+# RUN pip install --no-cache-dir xformers
 
-# ---------------------------------------------------------------------
-# Install RunPod Serverless SDK
-# ---------------------------------------------------------------------
-RUN pip install runpod
+# -------------------------
+# Custom nodes (WAN, SAM2, DWpose, RIFE, VHS, etc)
+# -------------------------
+COPY install-nodes.sh /workspace/install-nodes.sh
+RUN chmod +x /workspace/install-nodes.sh && /workspace/install-nodes.sh
 
-# ---------------------------------------------------------------------
-# Add runtime scripts
-# ---------------------------------------------------------------------
-COPY start.sh /workspace/start.sh
-COPY rp_handler.py /workspace/rp_handler.py
-COPY serverless_comfy_runner.py /workspace/serverless_comfy_runner.py
+# -------------------------
+# Copy included models if you put them in build context ./models
+# (Opsi A: user places models/ before build)
+# -------------------------
+# If ./models exists in build context it will be copied into image.
+COPY models /workspace/models
+
+# Optional: run install-models.sh to fetch any missing models (slow)
 COPY install-models.sh /workspace/install-models.sh
+RUN chmod +x /workspace/install-models.sh && /workspace/install-models.sh || echo "install-models.sh exited (continue)"
 
-RUN chmod +x /workspace/*.sh
+# -------------------------
+# Copy serverless handler
+# -------------------------
+COPY serverless.py /workspace/serverless.py
+RUN chmod +x /workspace/serverless.py
 
-# ---------------------------------------------------------------------
-# Model directory
-# ---------------------------------------------------------------------
-RUN mkdir -p /workspace/models
+EXPOSE 8188
 
-ARG SKIP_MODEL_DOWNLOAD=0
-RUN if [ "$SKIP_MODEL_DOWNLOAD" = "0" ]; then bash /workspace/install-models.sh; fi
-
-ENV RUNPOD_MODE=SERVERLESS
-
-CMD ["bash", "/workspace/start.sh"]
+# Run serverless handler (it will launch ComfyUI then run the handler)
+CMD ["python3", "/workspace/serverless.py"]
