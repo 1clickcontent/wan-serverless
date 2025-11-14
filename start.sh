@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 set -e
-WORKDIR=/workspace
 
-echo "[start] Ensure models exist"
-if [ -f /workspace/install-models.sh ]; then
-  if [ "${SKIP_MODEL_DOWNLOAD:-0}" = "0" ]; then
-    echo "[start] running install-models.sh"
-    /workspace/install-models.sh || echo "install-models failed (continuing...)"
-  else
-    echo "[start] SKIP_MODEL_DOWNLOAD=1, skipping model download"
-  fi
-fi
+echo "[start] Ensure models installed"
+bash /workspace/install-models.sh || echo "Model install skipped or failed"
 
 export COMFY_CUSTOM_NODE_DIR=/workspace/ComfyUI/custom_nodes
 export COMFY_MODELS_DIR=/workspace/models
 
-echo "[start] Starting ComfyUI serverless runner"
-python3 /workspace/serverless.py
+echo "[start] Starting ComfyUI (background)..."
+python3 /workspace/serverless_comfy_runner.py &
+
+echo "[start] Waiting 3 seconds before starting handler..."
+sleep 3
+
+echo "[start] Starting RunPod handler..."
+python3 /workspace/rp_handler.py
